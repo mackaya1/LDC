@@ -1,0 +1,92 @@
+"""Countour Plot Example"""
+
+
+from dolfin import *
+from mshr import *
+import matplotlib.pyplot as plt
+import matplotlib.tri as tri
+import matplotlib.mlab as mlab
+from math import pi, sin, cos, sqrt
+import numpy as np
+
+
+def mesh2triang(mesh):
+    xy = mesh.coordinates()
+    return tri.Triangulation(xy[:, 0], xy[:, 1], mesh.cells())
+
+def mplot(obj):
+    plt.gca().set_aspect('equal')
+    if isinstance(obj, Function):
+        mesh = obj.function_space().mesh()
+        if (mesh.geometry().dim() != 2):
+            raise(AttributeError)
+        if obj.vector().size() == mesh.num_cells():
+            C = obj.vector().array()
+            plt.tripcolor(mesh2triang(mesh), C)
+        else:
+            C = obj.compute_vertex_values(mesh)
+            plt.tripcolor(mesh2triang(mesh), C, shading='gouraud')
+    elif isinstance(obj, Mesh):
+        if (obj.geometry().dim() != 2):
+            raise(AttributeError)
+        plt.triplot(mesh2triang(obj), color='k')
+
+# example
+
+
+# Eccentric Journal Bearing problem mesh 
+r_a=0.021
+r_b=0.035
+x1=0.0
+y1=0.00
+x2=0.003
+y2=0.0
+c1=Circle(Point(x1,y1), r_a)
+c2=Circle(Point(x2,y2), r_b)
+cyl=c2-c1
+
+# Create mesh
+mesh = generate_mesh(cyl, 65)
+
+plot(mesh, interactive=True)
+plt.figure()
+mplot(mesh)
+plt.show()
+Q = FunctionSpace(mesh, "CG", 1)
+u = interpolate(Expression("x[0]*x[0]+x[1]*x[1]"), Q)
+#plot(F, interactive=True)
+mplot(u)
+plt.show()
+
+
+# CONTOUR PLOT (using matplotlib)
+plt.figure()
+mplot(mesh)
+plt.show()
+mplot(u)
+plt.show()
+
+#Plot Contours
+x = Expression('x[0]')
+y = Expression('x[1]')
+uvals = u.vector().array()
+xyvals = mesh.coordinates()     # CLEAN THIS UP!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+xvals = interpolate(x, Q)   #xyvals[:,0]
+yvals= interpolate(y, Q)   #xyvals[:,1]
+
+xvalsv = xvals.vector().array()
+yvalsv = yvals.vector().array()
+
+print(xvalsv)
+print(yvalsv)
+
+xx = np.linspace(-r_b,r_b)
+yy = np.linspace(-r_b,r_b)
+XX, YY = np.meshgrid(xx,yy)
+uu = mlab.griddata(xvalsv, yvalsv, uvals, xx, yy, interp='nn')
+
+plt.contour(XX, YY, uu)
+plt.show()
+
+
+

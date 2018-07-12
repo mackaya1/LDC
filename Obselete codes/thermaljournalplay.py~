@@ -1,0 +1,204 @@
+"""The journal bearing problem for concentric cylinders (thermal analysis) with a compressible Newtonian fluid using a simple equation of state (Fluid 0 in notes) """
+
+from __future__ import print_function
+from dolfin import *
+from mshr import *
+from math import pi, sin, cos, sqrt
+import numpy as np
+
+
+# Load mesh and subdomains
+r_a=0.5
+r_b=1.1
+
+# Create geometry 1
+x1=0.0
+y1=0.0
+x2=0.0
+y2=0.0
+
+c1=Circle(Point(x1,y1), r_a)
+c2=Circle(Point(x2,y2), r_b)
+
+cyl=c2-c1
+
+
+# Create mesh
+mesh = generate_mesh(cyl, 32)
+
+plot(mesh, interactive=True)
+
+
+# Define function spaces
+V = VectorFunctionSpace(mesh, "Lagrange", 2)
+Q = FunctionSpace(mesh, "Lagrange", 1)
+W = MixedFunctionSpace([V,Q,Q])
+
+# Set parameter values
+dt = 0.1
+Tf = 10
+nu = 0.06
+w_j = 1
+gamma=2.0
+c_p=1000.0
+Re=1.0
+Pr=1.0
+
+
+#Define Boundaries (Method 1)
+
+def c1_boundary(x):
+    tol = 1.0E-10
+    return abs(((x[0]-x1)*(x[0]-x1))+((x[1]-y1)*(x[1]-y1))) < r_a*r_a + DOLFIN_EPS
+           
+           
+def c2_boundary(x):
+    tol = 1.0E-10
+    return abs(((x[0]-x2)*(x[0]-x2))+((x[1]-y2)*(x[1]-y2)))  > r_b*r_b - DOLFIN_EPS   
+
+#Define Boundaries (Method 2)   
+
+class Omega0(SubDomain):
+    def inside(self, x, on_boundary):
+        return True if ((x[0]-x1)*(x[0]-x1))+((x[1]-y1)*(x[1]-y1)) < r_a*r_a + DOLFIN_EPS else False
+
+class Omega1(SubDomain):
+    def inside(self, x, on_boundary):
+        return True if ((x[0]-x2)*(x[0]-x2))+((x[1]-y2)*(x[1]-y2)) >= (1.0-10E-3)*r_b*r_b  else False
+
+omega0= Omega0()
+omega1= Omega1()
+
+# Create mesh functions over the cell facets
+sub_domains = MeshFunction("size_t", mesh, mesh.topology().dim() - 1)
+sub_domains.set_all(3)
+omega0.mark(sub_domains, 0)
+omega1.mark(sub_domains, 1)
+
+# Define coefficients
+k = Constant(dt)
+
+
+# Define time-dependent pressure boundary condition
+rho_bc = Expression("1000.0")
+
+#Define inner cylinder velocity 
+        
+w = Expression(('-w_j*(x[1]-y1)' , 'w_j*(x[0]-x1)' ), w_j=w_j , r_a=r_a, x1=x1, y1=y1)
+
+# Define boundary conditions
+noslip  = DirichletBC(W.sub(0), (0.0, 0.0), omega1) #Velocity boundary condition 1
+spin = DirichletBC(W.sub(0), w, omega0)  #Velocity boundary condition 2
+density = DirichletBC(W.sub(1), rho_bc, sub_domains, 0) #Density Boundary conditions
+temp_a= DirichletBC(W.sub(2), 0.0, omega0) #Temperature boundary condition 1
+temp_b= DirichletBC(W.sub(2), 0.0, omega1) #Temperature boundary condition 2
+bcu = [spin, noslip]
+bcrho = [density]
+bct = [temp_a, temp_b]
+
+#Collect Boundary Conditions
+bcs=[noslip, spin, density, temp_a, temp_b]
+
+
+# Define variational problem
+(u, rho, T) = TrialFunctions(W)
+(v, q, S) = TestFunctions(W)
+
+f = Constant((0, 0))
+
+#Initial conditions
+
+rho0_expr= Expression("100.0")
+u0_expr = Expression(("1.00","0.0"))
+T0_expr= Expression("10")
+
+rho0 = Function(Q)
+rho_00 = project(rho0_expr, Q) # V is M.sub(0)
+assign(rho0, rho_00)
+
+T0 = Function(Q)
+T_00 = project(T0_expr, Q) # V is M.sub(0)
+assign(T0, T_00)
+
+
+u0 = Function(V)
+u_00 = project(u0_expr, V) # V is M.sub(0)
+assign(u0, u_00)
+
+#Define u*grad(rho)
+
+gro = grad(rho)
+u_rho = dot(u,grad(rho))
+
+#WEak Formulation of equations of mass, motion and energy 
+
+a1 = inner(rho ,q)*dx + k*u_rho*q*dx + k*inner(rho*div(u),q)*dx #Conservation of mass equation weak formulation LHS
+a2 = inner(u,v)*dx + k*inner(dot(nabla_grad(u),u),v)*dx + k*(gamma-1.0)*inner(grad(T),v)*dx + k*(gamma-1)*inner(T*grad(rho),v)*dx 
+a2+= (k/Re)*inner(nabla_grad(u),nabla_grad(v))*dx + (k/Re)*inner(div(u),div(v))*dx #Momentum equation weak formulation LHS
+a3 = inner(T,S)*dx + k*inner(dot(u,grad(T)),S)*dx + k*(gamma-1.0)*inner(T*div(u),S)*dx + (k*gamma/(Re*Pr))*inner(grad(T),grad(S))*dx #Energy equation weak formulation LHS
+
+L1 = inner(rho0,q)*dx  #Conservation of mass equation weak formulation RHS
+L2 = inner(rho0*u0,v)*dx  #Momentum equation weak formulation RHS
+L3 = inner(rho0*T0,S)*dx  #Energy equation weak formulation RHS
+
+a=a1+a2+a3
+L=L1+L2+L3
+
+F = a - L
+
+w_ = Function(W)      # the most recently computed solution
+F  = action(F, w_)
+J  = derivative(F, w_)   # Gateaux derivative in dir. of w
+
+w=Function(W)
+problem = NonlinearVariationalProblem(F, w, bcs, J)
+
+solver = NonlinearVariationalSolver(problem)
+
+
+# Use amg preconditioner if available
+prec = "amg" if has_krylov_solver_preconditioner("amg") else "default"
+
+# Use nonzero guesses - essential for CG with non-symmetric BC
+parameters['krylov_solver']['nonzero_initial_guess'] = True
+
+# Create files for storing solution
+ufile = File("results/velocity.pvd")
+rhofile = File("results/density.pvd")
+Tfile= File("results/temperature.pvd")
+
+# Time-stepping
+t = dt
+while t < Tf + DOLFIN_EPS:
+
+    # Compute solution
+    w = Function(W)
+    solver.solve()
+    
+    # Split the mixed solution using deepcopy
+    # (needed for further computation on coefficient vector)
+    (u, rho, T) = w.split(True)
+ 
+    # Plot solution
+    plot(rho, title="Density", rescale=True)
+    plot(u, title="Velocity", rescale=True)
+    plot(T, title="Temperature", rescale=True)
+
+    # Save to file
+    ufile << u
+    rhofile << rho
+    Tfile << T
+
+    # Move to next time step
+    u0.assign(u)
+    rho0.assign(rho)
+    T0.assign(T)
+    t += dt
+    print("t =", t)
+
+# Hold plot
+plot(mesh)
+interactive()
+
+   
+

@@ -1,0 +1,26 @@
+from dolfin import *
+
+mesh = UnitSquareMesh(20, 20)
+
+# Break point
+p   = Point(0.0, 0.5)
+tol = 0.05
+
+# Selecting edges to refine
+class Border(SubDomain):
+    def inside(self, x, on_boundary):
+        return near(x[0], p.x(), tol) and near(x[1], p.y(), tol) and on_boundary
+
+Border = Border()
+
+# Number of refinements
+nor = 3
+
+for i in range(nor):
+    edge_markers = EdgeFunction("bool", mesh)
+    Border.mark(edge_markers, True)
+
+    adapt(mesh, edge_markers)
+    mesh = mesh.child()
+
+plot(mesh, interactive=True)

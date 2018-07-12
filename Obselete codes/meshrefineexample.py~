@@ -1,0 +1,37 @@
+"""Mesh refiner example"""
+
+from dolfin import *
+
+mesh = UnitSquareMesh(3,3)
+
+
+# Create FunctionSpaces
+V =  FunctionSpace(mesh, 'CG', 1)
+
+# Boundaries case
+def dOmega(x, on_boundary): return x[0] > (1.0 - DOLFIN_EPS) or x[0] < DOLFIN_EPS or x[1] > (1.0 - DOLFIN_EPS) or x[1] < DOLFIN_EPS
+g0 = Constant(0.0)
+
+plot(mesh, interactive=True)
+
+"""boundary_adjacent_cells = [myCell for myCell in cells(mesh)
+                                     if any([myFacet.exterior() for myFacet in facets(myCell)])]"""
+
+# Mark boundary adjacent cells
+iter = 0            # iteration counter
+maxiter = 8
+while iter < maxiter:
+      iter+=1
+ # a cell with at least one vertex on boundary belongs to boundary
+      boundary_cells = [cell for cell in cells(mesh)\
+            if any([near(vertex.x(0), 1) for vertex in vertices(cell)])]
+      cell_domains = CellFunction("bool", mesh)
+      cell_domains.set_all(False)
+      for myCell in boundary_cells:
+          cell_domains[myCell] = True
+      mesh = refine(mesh, cell_domains, redistribute=False)
+      plot(mesh, interactive=False)
+      print('Number of Cells:', mesh.num_cells())
+      print('Number of Vertices:', mesh.num_vertices())
+
+plot(cell_domains, interactive=True)

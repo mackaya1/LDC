@@ -1,0 +1,95 @@
+"""Dolfin Solution to Poisson Equation with Contour plot using MATPLOTLIB"""
+
+
+from dolfin import *
+import matplotlib.pyplot as plt
+import matplotlib.tri as tri
+import matplotlib.mlab as mlab
+from math import pi, sin, cos, sqrt
+import numpy as np
+
+# MATPLOTLIB CONTOUR FUNCTIONS
+def mesh2triang(mesh):
+    xy = mesh.coordinates()
+    return tri.Triangulation(xy[:, 0], xy[:, 1], mesh.cells()) # Mesh Diagram
+
+def mplot(obj):                     # Function Plot
+    plt.gca().set_aspect('equal')
+    if isinstance(obj, Function):
+        mesh = obj.function_space().mesh()
+        if (mesh.geometry().dim() != 2):
+            raise(AttributeError)
+        if obj.vector().size() == mesh.num_cells():
+            C = obj.vector().array()
+            plt.tripcolor(mesh2triang(mesh), C)
+        else:
+            C = obj.compute_vertex_values(mesh)
+            plt.tripcolor(mesh2triang(mesh), C, shading='gouraud')
+    elif isinstance(obj, Mesh):
+        if (obj.geometry().dim() != 2):
+            raise(AttributeError)
+        plt.triplot(mesh2triang(obj), color='k')
+
+# INITIAL DOLFIN SOLUTION
+
+# Create mesh and define function space
+mesh = UnitSquareMesh(5, 5)
+V = FunctionSpace(mesh, 'Lagrange', 1)
+
+# Define boundary conditions
+u0 = Expression(' x[0] + x[1]')
+
+def u0_boundary(x, on_boundary):
+    return on_boundary
+
+bc = DirichletBC(V, u0, u0_boundary)
+
+# Define variational problem
+u = TrialFunction(V)
+v = TestFunction(V)
+f = Constant(0.0)
+a = inner(nabla_grad(u), nabla_grad(v))*dx
+L = f*v*dx
+
+# Compute solution
+u = Function(V)
+solve(a == L, u, bc)
+
+# Plot solution and mesh
+#plot(u)
+#plot(mesh)
+
+
+
+# CONTOUR PLOT (using matplotlib)
+plt.figure()
+mplot(mesh)
+plt.show()
+mplot(u)
+plt.show()
+
+
+
+#Plot Contours
+x = Expression('x[0]')
+y = Expression('x[1]')
+uvals = u.vector().array()
+xyvals = mesh.coordinates()     # CLEAN THIS UP!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+xvalsv = interpolate(x, V)#xyvals[:,0]
+yvalsv= interpolate(y, V)#xyvals[:,1]
+
+xvals = xvalsv.vector().array()
+yvals = yvalsv.vector().array()
+
+print(xvalsv)
+print(yvalsv)
+
+xx = np.linspace(0,1)
+yy = np.linspace(0,1)
+XX, YY = np.meshgrid(xx,yy)
+uu = mlab.griddata(xvals, yvals, uvals, xx, yy, interp='nn')
+
+plt.contour(XX, YY, uu)
+plt.show()
+
+

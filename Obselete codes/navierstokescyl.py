@@ -1,0 +1,138 @@
+"""Python Code for solving the Navier-Stokes Equations on a hollow cylinder domain """
+
+from __future__ import print_function
+from dolfin import *
+from mshr import *
+from math import pi, sin, cos, sqrt
+
+# Print log messages only from the root process in parallel
+parameters["std_out_all_processes"] = False;
+
+# Construct hollow cylinder mesh
+r_a=0.5
+r_b=1.1
+
+# Create geometry
+c1=Circle(Point(0,0), r_a)
+c2=Circle(Point(0,0), r_b)
+
+cyl=c2-c1
+
+# Create mesh
+mesh = generate_mesh(cyl, 64)
+
+# Save to file and plot
+File("cylinder.pvd") << mesh
+plot(mesh, interactive=True)
+
+# Define function spaces (P2-P1)
+V = VectorFunctionSpace(mesh, "Lagrange", 2)
+Q = FunctionSpace(mesh, "Lagrange", 1)
+
+# Define trial and test functions
+u = TrialFunction(V)
+p = TrialFunction(Q)
+v = TestFunction(V)
+q = TestFunction(Q)
+
+# Set parameter values
+dt = 0.01
+T = 3
+nu = 0.05
+
+# Define time-dependent pressure boundary condition
+p_in = Expression("3*t*t*sin(10*t)", t=0.0)
+
+# Define boundary conditions
+noslip  = DirichletBC(V, (0, 0),
+                      "on_boundary")
+inflow  = DirichletBC(Q, p_in, "x[1] > 1.0 - DOLFIN_EPS")
+outflow = DirichletBC(Q, 0, "x[1] < -1.0 + DOLFIN_EPS")
+bcu = [noslip]
+bcp = [inflow, outflow]
+
+# Create functions
+u0 = Function(V)
+u1 = Function(V)
+p1 = Function(Q)
+
+# Define coefficients
+k = Constant(dt)
+f = Constant((0, 0))
+
+# Tentative velocity step
+F1 = inner(u - u0, v)*dx + k*inner(grad(u0)*u0, v)*dx + \
+     k*nu*inner(grad(u), grad(v))*dx - k*inner(f, v)*dx
+a1 = lhs(F1)
+L1 = rhs(F1)
+
+# Pressure update 
+a2 = k*inner(grad(p), grad(q))*dx
+L2 = -div(u1)*q*dx
+
+# Velocity update
+a3 = inner(u, v)*dx
+L3 = inner(u1, v)*dx - k*inner(grad(p1), v)*dx
+
+# Assemble matrices
+A1 = assemble(a1)
+A2 = assemble(a2)
+A3 = assemble(a3)
+
+# Use amg preconditioner if available
+prec = "amg" if has_krylov_solver_preconditioner("amg") else "default"
+
+# Use nonzero guesses - essential for CG with non-symmetric BC
+parameters['krylov_solver']['nonzero_initial_guess'] = True
+
+# Create files for storing solution
+ufile = File("results/velocity.pvd")
+pfile = File("results/pressure.pvd")
+
+# Time-stepping
+t = dt
+while t < T + DOLFIN_EPS:
+
+    # Update pressure boundary condition
+    p_in.t = t
+
+    # Compute tentative velocity step
+    begin("Computing tentative velocity")
+    b1 = assemble(L1)
+    [bc.apply(A1, b1) for bc in bcu]
+    solve(A1, u1.vector(), b1, "bicgstab", "default")
+    end()
+
+    # Pressure correction
+    begin("Computing pressure correction")
+    b2 = assemble(L2)
+    [bc.apply(A2, b2) for bc in bcp]
+    [bc.apply(p1.vector()) for bc in bcp]
+    solve(A2, p1.vector(), b2, "bicgstab", prec)
+    end()
+
+    # Velocity correction
+    begin("Computing velocity correction")
+    b3 = assemble(L3)
+    [bc.apply(A3, b3) for bc in bcu]
+    solve(A3, u1.vector(), b3, "bicgstab", "default")
+    end()
+
+    # Plot solution
+    plot(p1, title="Pressure", rescale=True)
+    plot(u1, title="Velocity", rescale=True)
+
+    # Save to file
+    ufile << u1
+    pfile << p1
+
+    # Move to next time step
+    u0.assign(u1)
+    t += dt
+    print("t =", t)
+
+# Hold plot
+plot(mesh)
+interactive()
+
+

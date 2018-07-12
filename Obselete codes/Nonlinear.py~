@@ -1,0 +1,82 @@
+"""Nonlinear PDE problem example code"""
+
+
+from dolfin import *
+from mshr import *
+from math import pi, sin, cos, sqrt
+import numpy as np
+
+
+#Define Domain
+
+mesh = UnitSquareMesh(15, 15)
+
+#Define Subdomains
+
+class LowerBoundary(SubDomain):
+    def inside(self, x, on_boundary):
+        return on_boundary and  (x[0] < DOLFIN_EPS)
+
+class UpperBoundary(SubDomain):
+    def inside(self, x, on_boundary):
+        return on_boundary and  (x[0] > 1 - DOLFIN_EPS)
+
+# Define Problem Parameters
+
+m = 2
+def q(u):
+    return (1+u)**m
+
+#Define Function Spaces
+V= FunctionSpace(mesh, "CG", 2)
+
+# Define variational problem for Picard iteration
+u = TrialFunction(V)
+v = TestFunction(V)
+u_k = Function(V)
+u_k = project(Constant(0.0), V)  # previous (known) u
+a = inner(q(u_k)*nabla_grad(u), nabla_grad(v))*dx
+f = Constant(0.0)
+L = f*v*dx
+
+
+#Define Boundary Conditions
+
+bc1 = DirichletBC(V, Constant(0.0), LowerBoundary())
+bc2 = DirichletBC(V, Constant(1.0), UpperBoundary())
+
+bcs = [bc1, bc2]
+
+# Define variational problem for initial guess (q(u)=1, i.e., m=0)
+u = TrialFunction(V)
+v = TestFunction(V)
+a = inner(nabla_grad(u), nabla_grad(v))*dx
+f = Constant(0.0)
+L = f*v*dx
+A, b = assemble_system(a, L, bcs)
+u_k = Function(V)
+U_k = u_k.vector()
+solve(A, U_k, b)
+def Dq(u):
+    return m*(1+u)**(m-1)
+
+du = TrialFunction(V) # u = u_k + omega*du
+a = inner(q(u_k)*nabla_grad(du), nabla_grad(v))*dx + \
+    inner(Dq(u_k)*du*nabla_grad(u_k), nabla_grad(v))*dx
+L = -inner(q(u_k)*nabla_grad(u_k), nabla_grad(v))*dx
+
+du = Function(V)
+u  = Function(V)  # u = u_k + omega*du
+omega = 1.0       # relaxation parameter
+eps = 1.0
+tol = 1.0E-5
+iter = 0
+maxiter = 25
+while eps > tol and iter < maxiter:
+    iter += 1
+    A, b = assemble_system(a, L, bcs_du)
+    solve(A, du.vector(), b)
+    eps = numpy.linalg.norm(du.vector().array(), ord=numpy.Inf)
+    print 'Norm:', eps
+    u.vector()[:] = u_k.vector() + omega*du.vector()
+    u_k.assign(u)
